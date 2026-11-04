@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# Connects the Hunk in sandbox $1 to the host's session daemon, which rejects
+# other builds, and signs its requests with the host's credentials. Hunk keeps
+# those in XDG_RUNTIME_DIR, a tmpfs in the sandbox, so the launcher runs this
+# on every launch. The installer needs --force because it mistakes the kit's
+# `hunk` wrapper for another installation.
+
+set -euo pipefail
+
+name="$1"
+sandbox_hunk=/home/agent/.hunk/bin/hunk
+security_dir="${XDG_RUNTIME_DIR:-$HOME/.hunk}/hunk-mcp/security-v1"
+
+host_version="$(hunk --version)"
+sandbox_version="$(sbx exec "$name" -- "$sandbox_hunk" --version)"
+if [[ "$sandbox_version" != "$host_version" ]]; then
+  sbx exec "$name" -- sh -c '
+    set -eu
+    installer=$(mktemp)
+    trap "rm -f \"\$installer\"" EXIT
+    curl -fsSL https://hunk.dev/install.sh -o "$installer"
+    sh "$installer" "$1" --no-modify-path --force
+  ' sh "$host_version"
+fi
+
+if [[ ! -d "$security_dir" ]]; then
+  exit 0
+fi
+
+sandbox_dirs="$(sbx exec "$name" -- sh -c '
+  set -eu
+  umask 077
+  runtime_dir="${XDG_RUNTIME_DIR:-$HOME/.hunk}/hunk-mcp"
+  mkdir -p "$runtime_dir"
+  printf "%s\n" "$runtime_dir" "$(mktemp -d)"
+')"
+{ read -r runtime_dir && read -r stage_dir; } <<< "$sandbox_dirs"
+sbx cp "$security_dir" "$name:$stage_dir"
+sbx exec -u root "$name" -- sh -c '
+  set -eu
+  chown -R 1000:1000 "$1/security-v1"
+  chmod 700 "$1/security-v1"
+  chmod 600 "$1/security-v1"/*
+  rm -rf "$2/security-v1"
+  mv "$1/security-v1" "$2/security-v1"
+  rm -rf "$1"
+' sh "$stage_dir" "$runtime_dir"

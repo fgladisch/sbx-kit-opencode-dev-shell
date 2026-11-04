@@ -69,6 +69,8 @@ Link it into `~/bin`:
 ln -s "$(pwd)/bin/opencode-sbx" "$HOME/bin/opencode-sbx"
 ```
 
+Link the launcher rather than copying it: it follows the link to find its helper scripts in [`libexec/`](libexec).
+
 Then launch OpenCode from any repository:
 
 ```bash
