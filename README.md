@@ -1,6 +1,6 @@
 # OpenCode development shell kit
 
-A standalone Docker Sandboxes kit for [OpenCode V2](https://opencode.ai/v2/docs/) with Zsh, [fnm](https://github.com/Schniz/fnm), Node.js 24 and 26, [pnpm](https://pnpm.io/), TypeScript and ESLint language servers, and architecture-native Chromium.
+A standalone Docker Sandboxes kit for [OpenCode V2](https://opencode.ai/v2/docs/) with Zsh, [fnm](https://github.com/Schniz/fnm), Node.js 24 and 26, [pnpm](https://pnpm.io/), TypeScript and ESLint language servers, architecture-native Chromium, and [Hunk](https://hunk.dev/) connected to the host's review sessions.
 
 The kit builds on `docker/sandbox-templates:shell-docker` rather than the official `opencode` kit. That kit ships OpenCode 1 and manages `~/.config/opencode/opencode.json` for its MCP gateway, while this kit runs OpenCode V2 with your own configuration and logins.
 
@@ -15,7 +15,8 @@ During sandbox creation, the kit:
 - installs pnpm, the TypeScript language server with TypeScript 6, and the ESLint language server into the image's global npm prefix;
 - downloads the sipgate root CA from `ca.live.sipgate.net` and adds it to the system trust store, so internal services such as the datapls MCP server pass TLS verification;
 - installs Playwright's pinned, architecture-native Chromium build and its system libraries;
-- exposes OpenCode, fnm, Node.js, Chromium, pnpm, and the language servers on the sandbox `PATH`;
+- installs the latest Hunk release to `~/.hunk/bin` behind a `hunk` wrapper that reaches the host's Hunk session daemon (see [Hunk](#hunk));
+- exposes OpenCode, fnm, Node.js, Chromium, Hunk, pnpm, and the language servers on the sandbox `PATH`;
 - binds the `github`, `sipgate_os`, `sonarqube`, and `langsmith` sandbox secrets to proxy-managed `GH_TOKEN`, `SG_AI_PROXY_API_KEY`, `SONARQUBE_TOKEN`, and `LANGSMITH_API_KEY` environment variables;
 - initializes fnm from `~/.zshenv`.
 
@@ -58,8 +59,9 @@ A sandbox started this way has the tooling but none of your OpenCode settings or
 1. derive the sandbox name `opencode-dev-<repository>` from the current directory name;
 2. create the sandbox when necessary, with the current directory as its workspace;
 3. copy your OpenCode configuration, skills, and saved logins into a newly created sandbox (see [Copied host state](#copied-host-state));
-4. upgrade OpenCode and its package plugins on every launch;
-5. attach to OpenCode and forward every argument to OpenCode unchanged.
+4. match the sandbox's Hunk to the host's version and copy the host's Hunk session credentials on every launch (see [Hunk](#hunk));
+5. upgrade OpenCode and its package plugins on every launch;
+6. attach to OpenCode and forward every argument to OpenCode unchanged.
 
 Link it into `~/bin`:
 
@@ -114,6 +116,22 @@ The hint applies only to that command, so set it per invocation instead of expor
 
 Herdr reads OpenCode's state from the screen. The Herdr OpenCode plugins copied with your configuration don't report state from the sandbox, because Herdr's pane variables and socket don't reach it. If a pane shows the wrong state, inspect the match with `herdr agent explain <pane>`.
 
+### Hunk
+
+OpenCode in the sandbox can drive the [Hunk](https://hunk.dev/) review windows open on your host with `hunk session` commands, for example through the `hunk-review` skill. Open Hunk on the host as usual. The workspace has the same path in the sandbox as on the host, so `hunk session ... --repo .` finds the host window for the repository.
+
+The `hunk` command in the sandbox is a wrapper around `~/.hunk/bin/hunk`. It sets `HUNK_MCP_HOST=localhost` and clears `NO_PROXY`, so Hunk sends its requests for `localhost:47657` through the sandbox proxy, which forwards them to the daemon on the host's `localhost`. The kit allows `localhost:47657` for that. Hunk signs the daemon URL into its authentication, so the sandbox must address the daemon by the same `localhost` URL the daemon receives; `host.docker.internal` fails authentication. The kit also sets `HUNK_DISABLE_UPDATE_NOTICE=1` and leaves Hunk updates to the launcher.
+
+When Hunk is installed on the host, the launcher also, on every launch:
+
+1. installs the host's Hunk version in the sandbox when they differ, because the daemon rejects clients from another build;
+2. copies the session credentials from `${XDG_RUNTIME_DIR:-~/.hunk}/hunk-mcp/security-v1` into the sandbox's Hunk runtime directory, which lives on a tmpfs and doesn't survive a sandbox restart.
+
+> [!WARNING]
+> The credentials include the daemon's private keys and are valid for ten years. Any process in the sandbox can control every Hunk window on the host, not only the one for its workspace, including reloading a window with a diff from another host directory and reading it back.
+
+Sandboxes created before the kit installed Hunk lack the binary and wrapper. The launcher warns on every launch for them; remove and recreate the sandbox to connect Hunk.
+
 ### Copied host state
 
 When it creates a sandbox, the launcher copies:
@@ -124,7 +142,7 @@ When it creates a sandbox, the launcher copies:
 | `~/.agents/skills` | `/home/agent/.agents/skills` |
 | `~/.local/share/opencode/opencode.db` | `/home/agent/.local/share/opencode/opencode.db` |
 
-The launcher honors `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `OPENCODE_DB`.
+The launcher honors `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `OPENCODE_DB`. Hunk's session credentials are copied separately on every launch; see [Hunk](#hunk).
 
 - **Symlinks.** The configuration is copied with `rsync --copy-unsafe-links`. Relative links that stay inside the configuration directory remain links, so a linked plugin source keeps its relative imports. Absolute links and links leading outside the directory, such as agents or commands from a shared repository, are replaced with copies of their targets.
 - **Host paths.** Paths in the configuration files are copied unchanged, so keep them free of host-specific absolute paths. Use relative paths, or link local plugin checkouts into `~/.config/opencode/plugins/`, where OpenCode discovers them automatically:
@@ -188,7 +206,8 @@ Provider logins for Claude and ChatGPT don't use sandbox secrets: they come from
 The kit allows the domains needed for:
 
 - Ubuntu and Docker APT metadata;
-- OpenCode, fnm, Node.js, npm, pnpm, and Playwright installation;
+- OpenCode, fnm, Node.js, npm, pnpm, Hunk, and Playwright installation;
+- the host's Hunk session daemon on `localhost:47657`;
 - GitHub API access and release downloads;
 - OpenAI and Anthropic authentication and model endpoints, including Claude subscription token refreshes;
 - the sipgate model endpoint and root CA download;
@@ -198,7 +217,7 @@ Review `permissions.network.allow` in [`spec.yaml`](spec.yaml) before use if you
 
 ## Compatibility
 
-The kit uses `schemaVersion: "2"` with the `kind: sandbox`, `sandbox`, `agentInstructions`, `permissions`, `credentials`, and `setup` fields. It validates with Docker Sandboxes `v0.50.1`.
+The kit uses `schemaVersion: "2"` with the `kind: sandbox`, `sandbox`, `agentInstructions`, `permissions`, `environment`, `credentials`, and `setup` fields. It validates with Docker Sandboxes `v0.50.1`.
 
 Validate it locally with:
 
@@ -208,6 +227,6 @@ sbx kit validate .
 
 ## Lifecycle
 
-All setup happens in `setup.install` during sandbox creation: OpenCode V2, Zsh, fnm, Node.js 24 and 26 with pnpm and the language servers, the sipgate root CA, and a pinned architecture-native Chromium build with Playwright's browser dependencies. The kit has no startup commands; fnm selects Node.js versions as shells start and change directories.
+All setup happens in `setup.install` during sandbox creation: OpenCode V2, Zsh, fnm, Node.js 24 and 26 with pnpm and the language servers, the sipgate root CA, a pinned architecture-native Chromium build with Playwright's browser dependencies, and Hunk. The kit has no startup commands; fnm selects Node.js versions as shells start and change directories.
 
 The installation steps are idempotent so sandbox recreation can safely repeat them.

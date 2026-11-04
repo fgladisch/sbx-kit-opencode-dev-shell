@@ -46,6 +46,12 @@ permissions:
       - coding.sipgate.ai
       - ca.live.sipgate.net:8443
       - datapls.agent.live.sipgate.net
+      - hunk.dev
+      - localhost:47657
+
+environment:
+  variables:
+    HUNK_DISABLE_UPDATE_NOTICE: "1"
 
 credentials:
   - service: github
@@ -171,11 +177,30 @@ setup:
         fi
         ln -sf "$browser" "$HOME/.local/bin/chromium"
       user: "1000"
-    - description: "Expose OpenCode V2 and fnm on the sandbox PATH"
+    - description: "Install Hunk for the agent user"
+      command: |
+        set -eu
+        if [ ! -x "$HOME/.hunk/bin/hunk" ]; then
+          installer=$(mktemp)
+          trap 'rm -f "$installer"' EXIT
+          curl -fsSL https://hunk.dev/install.sh -o "$installer"
+          sh "$installer" --no-modify-path
+        fi
+      user: "1000"
+    - description: "Expose OpenCode V2, fnm, and Hunk on the sandbox PATH"
       command: |
         set -eu
         ln -sf /home/agent/.opencode/bin/opencode /usr/local/bin/opencode
         ln -sf /home/agent/.local/share/fnm/fnm /usr/local/bin/fnm
+        rm -f /usr/local/bin/hunk
+        cat > /usr/local/bin/hunk <<'EOF'
+        #!/bin/sh
+        # Reach the host's Hunk session daemon through the sandbox proxy, which
+        # forwards localhost requests to the host. The daemon only authenticates
+        # clients whose signed endpoint matches the localhost URL it receives.
+        NO_PROXY= no_proxy= HUNK_MCP_HOST=localhost exec /home/agent/.hunk/bin/hunk "$@"
+        EOF
+        chmod 0755 /usr/local/bin/hunk
       user: "0"
     - description: "Let fnm select the repository's Node.js version in every zsh, including OpenCode's shell commands"
       command: |
