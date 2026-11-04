@@ -102,6 +102,18 @@ The launcher uses the published Git kit by default. Set `OPENCODE_SBX_KIT` to a 
 OPENCODE_SBX_KIT=/path/to/sbx-kit-opencode-dev-shell opencode-sbx
 ```
 
+### Herdr
+
+[Herdr](https://herdr.dev/) can't see the OpenCode process inside the sandbox, only the launcher and `sbx run` on the host. Set [`HERDR_AGENT`](https://herdr.dev/tui/docs/agents/#vms-and-sandbox-wrappers) on the launcher command in a Herdr pane so Herdr tracks it as OpenCode:
+
+```bash
+HERDR_AGENT=opencode opencode-sbx
+```
+
+The hint applies only to that command, so set it per invocation instead of exporting it. Arguments pass through as usual, for example `HERDR_AGENT=opencode opencode-sbx --continue`.
+
+Herdr reads OpenCode's state from the screen. The Herdr OpenCode plugins copied with your configuration don't report state from the sandbox, because Herdr's pane variables and socket don't reach it. If a pane shows the wrong state, inspect the match with `herdr agent explain <pane>`.
+
 ### Copied host state
 
 When it creates a sandbox, the launcher copies:
