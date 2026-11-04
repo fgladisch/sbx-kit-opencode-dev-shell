@@ -26,6 +26,8 @@ exec 3>&1 4<&0 1>&2 0</dev/null
 # The sandbox's Hunk reaches the host's session daemon, which rejects other
 # builds, and signs its requests with the host's credentials. Hunk keeps those
 # in XDG_RUNTIME_DIR, a tmpfs in the sandbox, so they're copied on every launch.
+# The installer needs --force because it mistakes the kit's `hunk` wrapper for
+# another installation.
 sync_hunk() {
   local host_version sandbox_version sandbox_dirs runtime_dir stage_dir
 
@@ -37,7 +39,7 @@ sync_hunk() {
       installer=$(mktemp)
       trap "rm -f \"\$installer\"" EXIT
       curl -fsSL https://hunk.dev/install.sh -o "$installer"
-      sh "$installer" "$1" --no-modify-path
+      sh "$installer" "$1" --no-modify-path --force
     ' sh "$host_version" || return 1
   fi
 
