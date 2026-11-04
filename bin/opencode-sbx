@@ -1,0 +1,94 @@
+#!/bin/bash
+
+set -euo pipefail
+
+name="opencode-dev-$(basename "$PWD")"
+opencode_kit="${OPENCODE_SBX_KIT:-git+https://github.com/fgladisch/sbx-kit-opencode-dev-shell.git}"
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+database="${OPENCODE_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}"
+skills_dir="$HOME/.agents/skills"
+sandbox_home=/home/agent
+sandbox_opencode="$sandbox_home/.opencode/bin/opencode"
+
+# `sbx run` only relays OpenCode's output when attached to a terminal. Editors
+# that spawn OpenCode over pipes (ACP) need a plain `sbx exec -i` session instead.
+interactive=false
+if [[ -t 0 && -t 1 ]]; then
+  interactive=true
+fi
+
+# Keep stdio clean for OpenCode: ACP speaks JSON-RPC over stdin/stdout, so setup
+# commands get no stdin and write to stderr. Only OpenCode sees the original streams.
+exec 3>&1 4<&0 1>&2 0</dev/null
+
+sandbox_names=""
+if ! sandbox_names="$(sbx ls -q)"; then
+  echo "ERROR: failed to list sandboxes; refusing to create '$name'." >&2
+  exit 1
+fi
+
+sandbox_exists=false
+while IFS= read -r sandbox_name; do
+  if [[ "$sandbox_name" == "$name" ]]; then
+    sandbox_exists=true
+    break
+  fi
+done <<< "$sandbox_names"
+
+if [[ "$sandbox_exists" == false ]]; then
+  if [[ ! -d "$config_dir" ]]; then
+    echo "ERROR: OpenCode configuration directory '$config_dir' not found." >&2
+    exit 1
+  fi
+
+  stage="$(mktemp -d "${TMPDIR:-/tmp}/opencode-sbx.XXXXXX")"
+  trap 'rm -rf "$stage"' EXIT
+
+  # Keep relative symlinks inside the configuration, which linked plugin sources
+  # need for their relative imports, and copy the targets of all other links,
+  # which don't exist in the sandbox. The background service's credentials
+  # stay on the host.
+  rsync -a --copy-unsafe-links --exclude service.json "$config_dir/" "$stage/opencode/"
+
+  if [[ -d "$skills_dir" ]]; then
+    cp -RL "$skills_dir" "$stage/skills"
+  fi
+
+  # Snapshot the database consistently while the host service may be writing.
+  if [[ -f "$database" ]]; then
+    sqlite3 "$database" ".backup '$stage/opencode.db'"
+  fi
+
+  sbx create \
+    --name "$name" \
+    "$opencode_kit" \
+    "$PWD"
+
+  sbx exec "$name" -- mkdir -p "$sandbox_home/.config" "$sandbox_home/.local/share/opencode"
+  sbx cp "$stage/opencode" "$name:$sandbox_home/.config"
+  sbx exec -u root "$name" -- chown -R 1000:1000 "$sandbox_home/.config/opencode"
+
+  if [[ -d "$stage/skills" ]]; then
+    sbx exec "$name" -- mkdir -p "$sandbox_home/.agents"
+    sbx cp "$stage/skills" "$name:$sandbox_home/.agents"
+    sbx exec -u root "$name" -- chown -R 1000:1000 "$sandbox_home/.agents/skills"
+  fi
+
+  if [[ -f "$stage/opencode.db" ]]; then
+    sbx cp "$stage/opencode.db" "$name:$sandbox_home/.local/share/opencode/opencode.db"
+    sbx exec -u root "$name" -- chown 1000:1000 "$sandbox_home/.local/share/opencode/opencode.db"
+    sbx exec "$name" -- chmod 600 "$sandbox_home/.local/share/opencode/opencode.db"
+  fi
+fi
+
+if ! sbx exec "$name" -- "$sandbox_opencode" upgrade; then
+  echo "WARNING: failed to upgrade OpenCode in '$name'; continuing with the installed version." >&2
+fi
+if ! sbx exec "$name" -- "$sandbox_opencode" plugin update; then
+  echo "WARNING: failed to update OpenCode plugins in '$name'; continuing with the installed versions." >&2
+fi
+if [[ "$interactive" == true ]]; then
+  sbx run --name "$name" -- "$@" 0<&4 1>&3 3>&- 4<&-
+else
+  sbx exec -i -w "$PWD" "$name" "$sandbox_opencode" "$@" 0<&4 1>&3 3>&- 4<&-
+fi

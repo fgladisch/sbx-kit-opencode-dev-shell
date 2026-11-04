@@ -1,0 +1,186 @@
+schemaVersion: "2"
+kind: sandbox
+name: opencode-dev
+displayName: OpenCode development shell
+description: "Runs OpenCode V2 with zsh, fnm, and repository-aware Node.js setup"
+
+sandbox:
+  image: "docker/sandbox-templates:shell-docker"
+  entrypoint: [/home/agent/.opencode/bin/opencode]
+
+agentInstructions:
+  filename: AGENTS.md
+
+permissions:
+  network:
+    allow:
+      - archive.ubuntu.com
+      - security.ubuntu.com
+      - ports.ubuntu.com
+      - download.docker.com
+      - opencode.ai
+      - models.dev
+      - fnm.vercel.app
+      - api.github.com
+      - github.com
+      - codeload.github.com
+      - objects.githubusercontent.com
+      - raw.githubusercontent.com
+      - release-assets.githubusercontent.com
+      - nodejs.org
+      - registry.npmjs.org
+      - cdn.playwright.dev
+      - playwright.download.prss.microsoft.com
+      - chatgpt.com
+      - auth.openai.com
+      - api.openai.com
+      - api.anthropic.com
+      - console.anthropic.com
+      - platform.claude.com
+      - claude.ai
+      - mcp.atlassian.com
+      - mcp.slack.com
+      - slack.com
+      - api.sonarcloud.io
+      - eu.api.smith.langchain.com
+      - coding.sipgate.ai
+      - ca.live.sipgate.net:8443
+      - datapls.agent.live.sipgate.net
+
+credentials:
+  - service: github
+    apiKey:
+      name: GH_TOKEN
+      proxyManaged: true
+      inject:
+        - domain: api.github.com
+          header: Authorization
+          format: "Bearer %s"
+        - domain: github.com
+          scheme: basic
+          username: x-access-token
+        - domain: raw.githubusercontent.com
+          header: Authorization
+          format: "Bearer %s"
+  - service: sipgate_os
+    apiKey:
+      name: SG_AI_PROXY_API_KEY
+      proxyManaged: true
+      inject:
+        - domain: coding.sipgate.ai
+          header: Authorization
+          format: "Bearer %s"
+  - service: sonarqube
+    apiKey:
+      name: SONARQUBE_TOKEN
+      proxyManaged: true
+      inject:
+        - domain: api.sonarcloud.io
+          header: Authorization
+          format: "Bearer %s"
+  - service: langsmith
+    apiKey:
+      name: LANGSMITH_API_KEY
+      proxyManaged: true
+      inject:
+        - domain: eu.api.smith.langchain.com
+          header: X-Api-Key
+          format: "%s"
+
+setup:
+  install:
+    - description: "Install OpenCode V2 for the agent user"
+      command: |
+        set -eu
+        if [ ! -x "$HOME/.opencode/bin/opencode" ]; then
+          installer=$(mktemp)
+          trap 'rm -f "$installer"' EXIT
+          curl -fsSL https://opencode.ai/v2/install -o "$installer"
+          bash "$installer" --no-modify-path
+        fi
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode"
+      user: "1000"
+    - description: "Install the native build toolchain and zsh, then set the agent user's login shell"
+      command: |
+        set -eu
+        export DEBIAN_FRONTEND=noninteractive
+        if ! command -v zsh >/dev/null 2>&1 || ! dpkg-query -W build-essential >/dev/null 2>&1; then
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential zsh
+          rm -rf /var/lib/apt/lists/*
+        fi
+        usermod --shell /bin/zsh agent
+      user: "0"
+    - description: "Trust the sipgate root CA for internal services such as datapls"
+      command: |
+        set -eu
+        ca=/usr/local/share/ca-certificates/sipgate-root-ca.crt
+        if [ ! -s "$ca" ]; then
+          download=$(mktemp)
+          trap 'rm -f "$download"' EXIT
+          curl -fsSL https://ca.live.sipgate.net:8443/certs/current_root -o "$download"
+          openssl x509 -in "$download" -noout
+          install -m 0644 "$download" "$ca"
+        fi
+        update-ca-certificates
+      user: "0"
+    - description: "Install fnm for the agent user"
+      command: |
+        set -eu
+        if [ ! -x "$HOME/.local/share/fnm/fnm" ]; then
+          installer=$(mktemp)
+          trap 'rm -f "$installer"' EXIT
+          curl -fsSL https://fnm.vercel.app/install -o "$installer"
+          bash "$installer" --skip-shell
+        fi
+      user: "1000"
+    - description: "Install Node.js 24 and 26, then pnpm and the language servers into the image's global npm prefix"
+      command: |
+        set -eu
+        fnm="$HOME/.local/share/fnm/fnm"
+        eval "$("$fnm" env --shell bash)"
+        "$fnm" install 24
+        "$fnm" install 26
+        "$fnm" default 26
+        "$fnm" use default
+        for executable in node npm npx; do
+          ln -sf "$HOME/.local/share/fnm/aliases/default/bin/$executable" "$HOME/.local/bin/$executable"
+        done
+        npm install --global \
+          pnpm typescript-language-server typescript@6 @t1ckbase/vscode-langservers-extracted@2.0.2
+      user: "1000"
+    - description: "Install an architecture-native Chromium and its browser system libraries"
+      command: |
+        set -eu
+        export PATH="$HOME/.local/bin:$PATH"
+        playwright_version=1.62.1
+        browser_root="$HOME/.cache/ms-playwright"
+        PLAYWRIGHT_BROWSERS_PATH="$browser_root" \
+          npx --yes "playwright@$playwright_version" \
+          install --with-deps --no-shell chromium
+        browser=
+        for candidate in "$browser_root"/chromium-*/chrome-linux*/chrome; do
+          if [ -x "$candidate" ]; then
+            browser="$candidate"
+          fi
+        done
+        if [ -z "$browser" ]; then
+          printf 'Playwright Chromium executable not found under %s\n' "$browser_root" >&2
+          exit 1
+        fi
+        ln -sf "$browser" "$HOME/.local/bin/chromium"
+      user: "1000"
+    - description: "Expose OpenCode V2 and fnm on the sandbox PATH"
+      command: |
+        set -eu
+        ln -sf /home/agent/.opencode/bin/opencode /usr/local/bin/opencode
+        ln -sf /home/agent/.local/share/fnm/fnm /usr/local/bin/fnm
+      user: "0"
+    - description: "Let fnm select the repository's Node.js version in every zsh, including OpenCode's shell commands"
+      command: |
+        set -eu
+        init='eval "$(fnm env --use-on-cd --version-file-strategy=recursive --resolve-engines --log-level=quiet --shell zsh)" && _fnm_autoload_hook'
+        touch "$HOME/.zshenv"
+        grep -Fqx "$init" "$HOME/.zshenv" || printf '\n%s\n' "$init" >> "$HOME/.zshenv"
+      user: "1000"
