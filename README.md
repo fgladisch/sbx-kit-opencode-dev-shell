@@ -1,6 +1,6 @@
 # OpenCode development shell kit
 
-A standalone Docker Sandboxes kit for [OpenCode V2](https://opencode.ai/v2/docs/) with Zsh, [fnm](https://github.com/Schniz/fnm), Node.js 24 and 26, [pnpm](https://pnpm.io/), TypeScript and ESLint language servers, architecture-native Chromium, and [Hunk](https://hunk.dev/) connected to the host's review sessions.
+A standalone Docker Sandboxes kit for [OpenCode V2](https://opencode.ai/v2/docs/) with Zsh, [fnm](https://github.com/Schniz/fnm), Node.js 24 and 26, [pnpm](https://pnpm.io/), architecture-native Chromium, and [Hunk](https://hunk.dev/) connected to the host's review sessions.
 
 The kit builds on `docker/sandbox-templates:shell-docker` rather than the official `opencode` kit. That kit ships OpenCode 1 and manages `~/.config/opencode/opencode.json` for its MCP gateway, while this kit runs OpenCode V2 with your own configuration and logins.
 
@@ -12,11 +12,11 @@ During sandbox creation, the kit:
 - loads the repository's `AGENTS.md` through the kit's `agentInstructions`;
 - installs Zsh, Ubuntu's `build-essential` toolchain, and fnm;
 - installs the latest Node.js 24 and 26 releases with fnm and makes 26 the default;
-- installs pnpm, the TypeScript language server with TypeScript 6, and the ESLint language server into the image's global npm prefix;
+- installs pnpm into the image's global npm prefix;
 - downloads the sipgate root CA from `ca.live.sipgate.net` and adds it to the system trust store, so internal services such as the datapls MCP server pass TLS verification;
 - installs Playwright's pinned, architecture-native Chromium build and its system libraries;
 - installs the latest Hunk release to `~/.hunk/bin` behind a `hunk` wrapper that reaches the host's Hunk session daemon (see [Hunk](#hunk));
-- exposes OpenCode, fnm, Node.js, Chromium, Hunk, pnpm, and the language servers on the sandbox `PATH`;
+- exposes OpenCode, fnm, Node.js, Chromium, Hunk, and pnpm on the sandbox `PATH`;
 - binds the `github`, `sipgate_os`, `sonarqube`, and `langsmith` sandbox secrets to proxy-managed `GH_TOKEN`, `SG_AI_PROXY_API_KEY`, `SONARQUBE_TOKEN`, and `LANGSMITH_API_KEY` environment variables;
 - initializes fnm from `~/.zshenv`.
 
@@ -30,7 +30,7 @@ fnm selects the Node.js version in every Zsh, including the non-interactive shel
 
 Without a version file, the shell uses the default Node.js 26. When the requested version isn't installed, the shell keeps its current version. Install other versions with `fnm install <version>`; fnm then selects them automatically.
 
-Processes started outside Zsh, including the language servers that OpenCode launches, use the default Node.js 26. Global npm packages live in `/usr/local/share/npm-global`, so they're available with every Node.js version. The TypeScript language server uses the project's own `typescript` dependency when it has one.
+Processes started outside Zsh use the default Node.js 26. Global npm packages live in `/usr/local/share/npm-global`, so they're available with every Node.js version.
 
 ## Allow the kit publisher
 
@@ -229,6 +229,6 @@ sbx kit validate .
 
 ## Lifecycle
 
-All setup happens in `setup.install` during sandbox creation: OpenCode V2, Zsh, fnm, Node.js 24 and 26 with pnpm and the language servers, the sipgate root CA, a pinned architecture-native Chromium build with Playwright's browser dependencies, and Hunk. The kit has no startup commands; fnm selects Node.js versions as shells start and change directories.
+All setup happens in `setup.install` during sandbox creation: OpenCode V2, Zsh, fnm, Node.js 24 and 26 with pnpm, the sipgate root CA, a pinned architecture-native Chromium build with Playwright's browser dependencies, and Hunk. The kit has no startup commands; fnm selects Node.js versions as shells start and change directories.
 
 The installation steps are idempotent so sandbox recreation can safely repeat them.

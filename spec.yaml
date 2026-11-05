@@ -141,7 +141,7 @@ setup:
           bash "$installer" --skip-shell
         fi
       user: "1000"
-    - description: "Install Node.js 24 and 26, then pnpm and the language servers into the image's global npm prefix"
+    - description: "Install Node.js 24 and 26, then pnpm into the image's global npm prefix"
       command: |
         set -eu
         fnm="$HOME/.local/share/fnm/fnm"
@@ -153,8 +153,7 @@ setup:
         for executable in node npm npx; do
           ln -sf "$HOME/.local/share/fnm/aliases/default/bin/$executable" "$HOME/.local/bin/$executable"
         done
-        npm install --global \
-          pnpm typescript-language-server typescript@6 @t1ckbase/vscode-langservers-extracted@2.0.2
+        npm install --global pnpm
       user: "1000"
     - description: "Install an architecture-native Chromium and its browser system libraries"
       command: |
